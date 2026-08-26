@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Test
+        run: swift test
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Assemble app bundle
+        run: ./build.sh
+
+      - name: Smoke test the binaries
+        run: |
+          set -euo pipefail
+          APP="dist/Kurura Isaha.app/Contents/MacOS/KururaIsaha"
+          CLI="dist/Kurura Isaha.app/Contents/MacOS/kurura"
+          "$APP" --version
+          "$APP" --where
+          "$CLI" --version
+          "$CLI" --help > /dev/null
+          # Nothing is listening on a CI runner, so the CLI must say so and exit 3
+          # rather than hanging or crashing.
+          "$CLI" status --no-launch && exit 1 || [ $? -eq 3 ]
+
+      - name: Icon was drawn into the bundle
+        run: |
+          set -euo pipefail
+          ICON="dist/Kurura Isaha.app/Contents/Resources/AppIcon.icns"
+          [ -s "$ICON" ] || { echo "no icon at $ICON" >&2; exit 1; }
+
+      - name: Bundle version matches VERSION
+        run: |
+          set -euo pipefail
+          EXPECTED="$(tr -d '[:space:]' < VERSION)"
+          REPORTED="$(dist/Kurura\ Isaha.app/Contents/MacOS/KururaIsaha --version)"
+          [ "$REPORTED" = "Kurura Isaha $EXPECTED" ] || {
+            echo "binary reports '$REPORTED', VERSION says '$EXPECTED'" >&2
+            exit 1
+          }
+
+      - name: Tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          EXPECTED="$(tr -d '[:space:]' < VERSION)"
+          [ "$TAG" = "$EXPECTED" ] || {
+            echo "tag $GITHUB_REF_NAME does not match VERSION $EXPECTED" >&2
+            exit 1
+          }
